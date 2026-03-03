@@ -3,170 +3,141 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const HOST = process.env.HOST || '127.0.0.1';
-const PORT = Number(process.env.PORT || 18789);
+const HOST = process.env.HOST || '0.0.0.0';
+const PORT = Number(process.env.PORT || 18790);
 
 function readJsonSafe(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
 
 function listProjects() {
-  const tasksRoot = '/home/node/.openclaw/workspace/tasks';
-  const entries = [];
-  if (!fs.existsSync(tasksRoot)) return entries;
-  for (const name of fs.readdirSync(tasksRoot)) {
-    const taskDir = path.join(tasksRoot, name);
-    try {
-      const stat = fs.statSync(taskDir);
-      if (!stat.isDirectory()) continue;
-      const statusPath = path.join(taskDir, 'status.json');
-      const st = readJsonSafe(statusPath) || {};
-      const links = [];
-      for (const f of ['spec.md','todo.md','dev-log.md']) {
-        const p = path.join(taskDir, f);
-        if (fs.existsSync(p)) links.push({ kind: f, path: p });
-      }
-      entries.push({
+  const root = '/home/node/.openclaw/workspace/tasks';
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root)
+    .filter((name) => fs.statSync(path.join(root, name)).isDirectory())
+    .map((name) => {
+      const st = readJsonSafe(path.join(root, name, 'status.json')) || {};
+      return {
         name,
-        taskDir,
         status: st.currentStep || 'unknown',
         nextAgent: st.nextAgent || 'unknown',
         updatedAt: st.updatedAt || null,
-        links
-      });
-    } catch {}
-  }
-  return entries;
+      };
+    })
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
 
 function listAgents() {
-  // Lightweight approximation via session logs
   const agentsRoot = '/home/node/.openclaw/agents';
-  const res = [];
-  if (!fs.existsSync(agentsRoot)) return res;
-  for (const agentName of fs.readdirSync(agentsRoot)) {
-    const agentDir = path.join(agentsRoot, agentName);
-    try {
-      const sessionsDir = path.join(agentDir, 'sessions');
+  if (!fs.existsSync(agentsRoot)) return [];
+  return fs.readdirSync(agentsRoot)
+    .filter((id) => fs.statSync(path.join(agentsRoot, id)).isDirectory())
+    .map((id) => {
+      const sessions = path.join(agentsRoot, id, 'sessions');
       let lastUpdated = null;
-      if (fs.existsSync(sessionsDir)) {
-        for (const f of fs.readdirSync(sessionsDir)) {
-          const p = path.join(sessionsDir, f);
-          const st = fs.statSync(p);
-          if (!lastUpdated || st.mtimeMs > lastUpdated) lastUpdated = st.mtimeMs;
+      if (fs.existsSync(sessions)) {
+        for (const f of fs.readdirSync(sessions)) {
+          const t = fs.statSync(path.join(sessions, f)).mtimeMs;
+          if (!lastUpdated || t > lastUpdated) lastUpdated = t;
         }
       }
-      res.push({ id: agentName, kind: agentName.includes('chat') ? 'chat' : agentName.includes('main') ? 'main' : 'other', lastUpdated, state: lastUpdated ? 'running' : 'idle' });
-    } catch {}
-  }
-  return res;
+      return {
+        id,
+        state: lastUpdated ? 'running' : 'idle',
+        lastUpdated,
+      };
+    });
 }
 
-function sendJson(res, obj) {
-  const body = JSON.stringify(obj);
-  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+function send(res, code, type, body) {
+  res.writeHead(code, { 'Content-Type': type });
   res.end(body);
-}
-
-function sendHtml(res, html) {
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(html);
 }
 
 const INDEX_HTML = `<!doctype html>
 <html lang="zh-Hant">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Task Dashboard</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; }
-  header { padding: 12px 16px; background:#111; color:#fff; }
-  .wrap { display:flex; }
-  .left { width: 45%; border-right: 1px solid #ddd; padding: 12px; }
-  .right { flex: 1; padding: 12px; }
-  .card { border:1px solid #ddd; border-radius:8px; padding:10px; margin-bottom:10px; }
-  .tag { display:inline-block; padding:2px 6px; border-radius:6px; font-size:12px; color:#fff; margin-right:6px; }
-  .status-developing { background:#16a34a; }
-  .status-planning { background:#2563eb; }
-  .status-completed { background:#374151; }
-  .status-failed { background:#dc2626; }
-  .status-unknown { background:#6b7280; }
-  .agent-running { background:#16a34a; }
-  .agent-idle { background:#6b7280; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Task Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-<header>
-  <h1>Task Dashboard</h1>
-  <div id="stats"></div>
-</header>
-<div class="wrap">
-  <div class="left">
-    <h2>專案</h2>
-    <div id="projects"></div>
-  </div>
-  <div class="right">
-    <h2>Agents</h2>
-    <div id="agents"></div>
-  </div>
-</div>
+  <header class="topbar" role="banner">
+    <h1>Task Dashboard</h1>
+    <p id="stats" aria-live="polite">載入中…</p>
+  </header>
+
+  <main class="layout" role="main">
+    <section class="panel" aria-label="專案列表">
+      <h2>專案</h2>
+      <div id="projects" class="list"></div>
+    </section>
+
+    <section class="panel" aria-label="Agent 狀態">
+      <h2>Agents</h2>
+      <div id="agents" class="list"></div>
+    </section>
+  </main>
+
 <script>
+const statusClass = (s) => ({ planning:'is-planning', developing:'is-success', completed:'is-neutral', failed:'is-danger' }[s] || 'is-neutral');
+
 async function load() {
   const [projects, agents] = await Promise.all([
     fetch('/api/projects').then(r=>r.json()),
     fetch('/api/agents').then(r=>r.json())
   ]);
-  const stats = document.getElementById('stats');
-  stats.textContent = '專案 ' + projects.length + '｜Agents ' + agents.length;
 
-  const pBox = document.getElementById('projects');
-  pBox.innerHTML = '';
-  for (const p of projects) {
-    const s = p.status || 'unknown';
-    const el = document.createElement('div');
+  document.getElementById('stats').textContent = '專案 ' + projects.length + ' ・ Agents ' + agents.length;
+
+  const p = document.getElementById('projects');
+  p.innerHTML = '';
+  for (const row of projects) {
+    const el = document.createElement('article');
     el.className = 'card';
     el.innerHTML =
-      '<div><strong>' + p.name + '</strong></div>' +
-      '<div>' +
-      '<span class="tag status-' + s + '">' + s + '</span>' +
-      '<span>next: ' + p.nextAgent + '</span>' +
+      '<div class="row">' +
+        '<strong>' + row.name + '</strong>' +
+        '<span class="badge ' + statusClass(row.status) + '">' + row.status + '</span>' +
       '</div>' +
-      '<div>updated: ' + (p.updatedAt || '-') + '</div>' +
-      '<div>links: ' + ((p.links||[]).map(l=>l.kind).join(', ')) + '</div>';
-    pBox.appendChild(el);
+      '<div class="meta">next: ' + row.nextAgent + '</div>' +
+      '<div class="meta">updated: ' + (row.updatedAt || '-') + '</div>';
+    p.appendChild(el);
   }
 
-  const aBox = document.getElementById('agents');
-  aBox.innerHTML = '';
-  for (const a of agents) {
-    const st = a.state || 'idle';
-    const el = document.createElement('div');
+  const a = document.getElementById('agents');
+  a.innerHTML = '';
+  for (const row of agents) {
+    const el = document.createElement('article');
     el.className = 'card';
     el.innerHTML =
-      '<div><strong>' + a.id + '</strong> <span class="tag agent-' + st + '">' + st + '</span></div>' +
-      '<div>kind: ' + a.kind + '</div>' +
-      '<div>lastUpdated: ' + (a.lastUpdated ? new Date(a.lastUpdated).toISOString() : '-') + '</div>';
-    aBox.appendChild(el);
+      '<div class="row">' +
+        '<strong>' + row.id + '</strong>' +
+        '<span class="badge ' + (row.state === 'running' ? 'is-success' : 'is-neutral') + '">' + row.state + '</span>' +
+      '</div>' +
+      '<div class="meta">last: ' + (row.lastUpdated ? new Date(row.lastUpdated).toISOString() : '-') + '</div>';
+    a.appendChild(el);
   }
 }
+
 load();
 </script>
 </body>
 </html>`;
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/api/projects') {
-    return sendJson(res, listProjects());
+  const u = new URL(req.url, `http://${req.headers.host}`);
+  if (u.pathname === '/' || u.pathname === '/task-dashboard') {
+    return send(res, 200, 'text/html; charset=utf-8', INDEX_HTML);
   }
-  if (req.method === 'GET' && req.url === '/api/agents') {
-    return sendJson(res, listAgents());
+  if (u.pathname === '/style.css') {
+    const css = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
+    return send(res, 200, 'text/css; charset=utf-8', css);
   }
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/task-dashboard')) {
-    return sendHtml(res, INDEX_HTML);
-  }
-  res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Not found');
+  if (u.pathname === '/api/projects') return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(listProjects()));
+  if (u.pathname === '/api/agents') return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(listAgents()));
+  return send(res, 404, 'text/plain; charset=utf-8', 'Not Found');
 });
 
 server.listen(PORT, HOST, () => {
