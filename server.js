@@ -3,8 +3,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const HOST = '127.0.0.1';
-const PORT = 18789;
+const HOST = process.env.HOST || '127.0.0.1';
+const PORT = Number(process.env.PORT || 18789);
 
 function readJsonSafe(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
@@ -118,7 +118,7 @@ async function load() {
     fetch('/api/agents').then(r=>r.json())
   ]);
   const stats = document.getElementById('stats');
-  stats.textContent = `專案 ${projects.length}｜Agents ${agents.length}`;
+  stats.textContent = '專案 ' + projects.length + '｜Agents ' + agents.length;
 
   const pBox = document.getElementById('projects');
   pBox.innerHTML = '';
@@ -126,15 +126,14 @@ async function load() {
     const s = p.status || 'unknown';
     const el = document.createElement('div');
     el.className = 'card';
-    el.innerHTML = `
-      <div><strong>${p.name}</strong></div>
-      <div>
-        <span class="tag status-${s}">${s}</span>
-        <span>next: ${p.nextAgent}</span>
-      </div>
-      <div>updated: ${p.updatedAt || '-'}</div>
-      <div>links: ${(p.links||[]).map(l=>l.kind).join(', ')}</div>
-    `;
+    el.innerHTML =
+      '<div><strong>' + p.name + '</strong></div>' +
+      '<div>' +
+      '<span class="tag status-' + s + '">' + s + '</span>' +
+      '<span>next: ' + p.nextAgent + '</span>' +
+      '</div>' +
+      '<div>updated: ' + (p.updatedAt || '-') + '</div>' +
+      '<div>links: ' + ((p.links||[]).map(l=>l.kind).join(', ')) + '</div>';
     pBox.appendChild(el);
   }
 
@@ -144,11 +143,10 @@ async function load() {
     const st = a.state || 'idle';
     const el = document.createElement('div');
     el.className = 'card';
-    el.innerHTML = `
-      <div><strong>${a.id}</strong> <span class="tag agent-${st}">${st}</span></div>
-      <div>kind: ${a.kind}</div>
-      <div>lastUpdated: ${a.lastUpdated ? new Date(a.lastUpdated).toISOString() : '-'}</div>
-    `;
+    el.innerHTML =
+      '<div><strong>' + a.id + '</strong> <span class="tag agent-' + st + '">' + st + '</span></div>' +
+      '<div>kind: ' + a.kind + '</div>' +
+      '<div>lastUpdated: ' + (a.lastUpdated ? new Date(a.lastUpdated).toISOString() : '-') + '</div>';
     aBox.appendChild(el);
   }
 }
