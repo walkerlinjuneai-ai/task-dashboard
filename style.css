@@ -31,6 +31,7 @@ body {
 }
 .topbar h1 { margin: 0 0 var(--space-1); font-size: 24px; }
 .topbar p { margin: 0; font-size: 14px; opacity: 0.95; }
+.topbar .version { font-size: 12px; opacity: 0.85; }
 
 .layout {
   display: grid;

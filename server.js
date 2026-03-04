@@ -2,9 +2,19 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const cp = require('child_process');
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 18790);
+
+function resolveVersion() {
+  try {
+    return cp.execSync('git rev-parse --short HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim();
+  } catch {
+    return 'dev';
+  }
+}
+const UI_VERSION = process.env.TASK_DASHBOARD_VERSION || resolveVersion();
 
 function readJsonSafe(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
@@ -64,7 +74,10 @@ const INDEX_HTML = `<!doctype html>
 </head>
 <body>
   <header class="topbar" role="banner">
-    <h1>Task Dashboard</h1>
+    <div>
+      <h1>Task Dashboard</h1>
+      <p class="version">版本：${UI_VERSION}</p>
+    </div>
     <p id="stats" aria-live="polite">載入中…</p>
   </header>
 
